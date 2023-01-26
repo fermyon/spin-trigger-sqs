@@ -1,0 +1,31 @@
+variant message-attribute-value {
+    str(string),  // TODO: parse for the number case?
+    binary(list<u8>),
+}
+
+record message-attribute {
+    name: string,
+    data-type: option<string>,
+    value: message-attribute-value,
+}
+
+record message {
+    id: option<string>,
+    // TODO: built-in attributes?  E.g. timestamps
+    message-attributes: list<message-attribute>,
+    body: option<string>,
+}
+
+enum error {
+    success,
+    error,
+}
+
+enum message-action {
+    delete,
+    leave,
+}
+
+// TODO: or allow for multiple messages?
+// TODO: allow a return to control delete/leave/extend visibility
+handle-queue-message: func(message: message) -> expected<message-action, error>
