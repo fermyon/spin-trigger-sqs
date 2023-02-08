@@ -11,8 +11,8 @@ aws-sdk-sqs = "0.22.0"
 clap = { version = "3.1.15", features = ["derive", "env"] }
 futures = "0.3.25"
 serde = "1.0"
-spin-core = { version = "0.7.1", path = "../../github/spin/crates/core" }
-spin-trigger = { version = "0.7.1", path = "../../github/spin/crates/trigger" }
+spin-core = { git = "https://github.com/fermyon/spin", tag = "v0.8.0" }
+spin-trigger = { git = "https://github.com/fermyon/spin", tag = "v0.8.0" }
 tokio = { version = "1.11", features = [ "full" ] }
 tokio-scoped = "0.2.0"
 

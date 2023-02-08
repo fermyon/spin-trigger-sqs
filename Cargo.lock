@@ -1289,6 +1289,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "03d8c417d7a8cb362e0c37e5d815f5eb7c37f79ff93707329d5a194e42e54ca0"
 
 [[package]]
+name = "dunce"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bd4b30a6560bbd9b4620f4de34c3f14f60848e58a9b7216801afcb4c7b31c3c"
+
+[[package]]
 name = "ed25519"
 version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1781,6 +1787,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "http-auth"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5430cacd7a1f9a02fbeb350dfc81a0e5ed42d81f3398cb0ba184017f85bdcfbc"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2053,6 +2068,21 @@ dependencies = [
  "serde",
  "serde_json",
  "simple_asn1",
+]
+
+[[package]]
+name = "jwt"
+version = "0.16.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6204285f77fe7d9784db3fdc449ecce1a0114927a51d5a41c4c7a292011c015f"
+dependencies = [
+ "base64 0.13.1",
+ "crypto-common",
+ "digest 0.10.6",
+ "hmac",
+ "serde",
+ "serde_json",
+ "sha2 0.10.6",
 ]
 
 [[package]]
@@ -2504,6 +2534,39 @@ dependencies = [
 ]
 
 [[package]]
+name = "oci-distribution"
+version = "0.9.3"
+source = "git+https://github.com/radu-matei/oci-distribution?branch=update-dockerhub-default-registry#f2cdd28637609009ee565b9410fc0b6eaa83e822"
+dependencies = [
+ "futures-util",
+ "http",
+ "http-auth",
+ "jwt",
+ "lazy_static",
+ "olpc-cjson",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.10.6",
+ "thiserror",
+ "tokio",
+ "tracing",
+ "unicase",
+]
+
+[[package]]
+name = "olpc-cjson"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "87dc75cf72208cd853671c1abccc5d5d1e43b1e378dde67340ef933219a8c13c"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unicode-normalization",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2591,7 +2654,8 @@ dependencies = [
 
 [[package]]
 name = "outbound-http"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "http",
@@ -2605,7 +2669,8 @@ dependencies = [
 
 [[package]]
 name = "outbound-mysql"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "mysql_async",
@@ -2613,12 +2678,14 @@ dependencies = [
  "spin-core",
  "tokio",
  "tracing",
+ "url",
  "wit-bindgen-wasmtime",
 ]
 
 [[package]]
 name = "outbound-pg"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "native-tls",
@@ -2632,7 +2699,8 @@ dependencies = [
 
 [[package]]
 name = "outbound-redis"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "redis",
@@ -3674,7 +3742,8 @@ checksum = "6e63cff320ae2c57904679ba7cb63280a3dc4613885beafb148ee7bf9aa9042d"
 
 [[package]]
 name = "spin-app"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3687,7 +3756,8 @@ dependencies = [
 
 [[package]]
 name = "spin-config"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3704,7 +3774,8 @@ dependencies = [
 
 [[package]]
 name = "spin-core"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3718,21 +3789,28 @@ dependencies = [
 
 [[package]]
 name = "spin-loader"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "async-trait",
  "bindle",
  "bytes",
+ "dirs",
+ "dunce",
  "futures",
  "glob",
  "itertools",
  "lazy_static",
+ "mime_guess",
+ "oci-distribution",
  "outbound-http",
  "path-absolutize",
  "regex",
  "reqwest",
+ "semver",
  "serde",
+ "serde_json",
  "sha2 0.10.6",
  "spin-manifest",
  "tempfile",
@@ -3745,7 +3823,8 @@ dependencies = [
 
 [[package]]
 name = "spin-manifest"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "indexmap",
  "serde",
@@ -3755,7 +3834,8 @@ dependencies = [
 
 [[package]]
 name = "spin-trigger"
-version = "0.7.1"
+version = "0.8.0"
+source = "git+https://github.com/fermyon/spin?tag=v0.8.0#70862363b3d7213b48a69631273a743fe502f02a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3763,6 +3843,7 @@ dependencies = [
  "ctrlc",
  "dirs",
  "futures",
+ "oci-distribution",
  "outbound-http",
  "outbound-mysql",
  "outbound-pg",
