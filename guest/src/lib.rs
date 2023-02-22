@@ -9,6 +9,18 @@ impl sqs::Sqs for Sqs {
             println!("  ... ATTR {}: {:?}", attr.name, attr.value);
         }
         println!("  ... BODY: {:?}", message.body);
+
+        if let Some(mid) = message.id {
+            if let Some(last_char) = mid.chars().last() {
+                if let Some(num) = last_char.to_digit(10) {
+                    for i in 0..(num + 4) {
+                        println!("  ... thinking for {i} secs");
+                        std::thread::sleep(std::time::Duration::from_secs(i.into()));
+                    }
+                }
+            }
+        }
+
         Ok(sqs::MessageAction::Delete)
     }
 }

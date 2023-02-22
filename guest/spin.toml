@@ -11,7 +11,7 @@ source = "target/wasm32-wasi/release/guest.wasm"
 [component.trigger]
 queue_url = "https://sqs.us-west-2.amazonaws.com/177456779558/itowlsontest"
 max_messages = 1
-idle_wait_seconds = 8
+idle_wait_seconds = 3
 system_attributes = ["All"]
 message_attributes = ["glonk"]
 [component.build]

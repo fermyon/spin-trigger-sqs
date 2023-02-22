@@ -7,6 +7,9 @@ use serde::{Deserialize, Serialize};
 use sqs::Sqs;
 use spin_trigger::{cli::{NoArgs, TriggerExecutorCommand}, TriggerAppEngine, TriggerExecutor};
 
+// TODO: dynamically
+const QUEUE_TIMEOUT_SECS: u16 = 30;
+
 wit_bindgen_wasmtime::import!({paths: ["sqs.wit"], async: *});
 
 pub(crate) type RuntimeData = sqs::SqsData;
@@ -107,6 +110,8 @@ impl SqsTrigger {
     }
 
     async fn receive(engine: Arc<TriggerAppEngine<Self>>, client: aws_sdk_sqs::Client, component: Component) -> Result<()> {
+        let queue_timeout_secs = get_queue_timeout_secs(&client, &component.queue_url).await;
+
         loop {
             println!("Attempting to receive up to {} from {}...", component.max_messages, component.queue_url);
 
@@ -120,39 +125,14 @@ impl SqsTrigger {
                 .await?;
 
             if let Some(msgs) = rmo.messages() {
+                let msgs = msgs.to_vec();
                 println!("...received {} message(s) from {}", msgs.len(), component.queue_url);
                 for m in msgs {
-                    let empty = HashMap::new();
-                    let empty2 = HashMap::new();
-                    let sysattrs = m.attributes()
-                        .unwrap_or(&empty)
-                        .iter()
-                        .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: sqs::MessageAttributeValue::Str(v.as_str()), data_type: None })
-                        .collect::<Vec<_>>();
-                    let userattrs = m.message_attributes()
-                        .unwrap_or(&empty2)
-                        .iter()
-                        .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: wit_value(v), data_type: None })
-                        .collect::<Vec<_>>();
-                    let attrs = vec![sysattrs, userattrs].concat();
-                    let message = sqs::Message {
-                        id: m.message_id(),
-                        message_attributes: &attrs,
-                        body: m.body(),
-                    };
-                    //
-                    // TODO: !!! HOLD THE LEASE WHILE PROCESSING !!!
-                    //
-                    let action = Self::execute(&engine, &component.id, message).await?;
-                    println!("...action is to {action:?}");
-                    if action == sqs::MessageAction::Delete {
-                        if let Some(receipt_handle) = m.receipt_handle() {
-                            match client.delete_message().queue_url(&component.queue_url).receipt_handle(receipt_handle).send().await {
-                                Ok(_) => (),
-                                Err(e) => eprintln!("TRIG: err deleting {receipt_handle}: {e:?}"),
-                            }
-                        }
-                    }
+                    // Spin off the execution so it doesn't block the queue
+                    let e = engine.clone();
+                    let cl = client.clone();
+                    let comp = component.clone();
+                    tokio::spawn(async move { Self::process_message(m, e, cl, comp, queue_timeout_secs).await; });
                 }
             } else {
                 tokio::time::sleep(component.idle_wait).await;
@@ -172,6 +152,104 @@ impl SqsTrigger {
             Err(_e) => Ok(sqs::MessageAction::Leave),
         }
     }
+
+    async fn process_message(m: aws_sdk_sqs::model::Message, engine: Arc<TriggerAppEngine<Self>>, client: aws_sdk_sqs::Client, component: Component, queue_timeout_secs: u16) {
+        // This has to be inlined or the lists fall off the edge of the borrow checker
+        let empty = HashMap::new();
+        let empty2 = HashMap::new();
+        let sysattrs = m.attributes()
+            .unwrap_or(&empty)
+            .iter()
+            .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: sqs::MessageAttributeValue::Str(v.as_str()), data_type: None })
+            .collect::<Vec<_>>();
+        let userattrs = m.message_attributes()
+            .unwrap_or(&empty2)
+            .iter()
+            .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: wit_value(v), data_type: None })
+            .collect::<Vec<_>>();
+        let attrs = vec![sysattrs, userattrs].concat();
+        let message = sqs::Message {
+            id: m.message_id(),
+            message_attributes: &attrs,
+            body: m.body(),
+        };
+
+        let renew_lease = hold_message_lease(&client, &component, &m, queue_timeout_secs);
+
+        let action = Self::execute(&engine, &component.id, message).await;
+        println!("...action is to {action:?}");
+
+        if let Some(renewer) = renew_lease {
+            renewer.abort();
+        }
+
+        match action {
+            Ok(sqs::MessageAction::Delete) => {
+                if let Some(receipt_handle) = m.receipt_handle() {
+                    match client.delete_message().queue_url(&component.queue_url).receipt_handle(receipt_handle).send().await {
+                        Ok(_) => (),
+                        Err(e) => eprintln!("TRIG: err deleting {receipt_handle}: {e:?}"),
+                    }
+                }
+            }
+            Ok(sqs::MessageAction::Leave) => (),  // TODO: change message visibility to 0
+            Err(e) => {
+                eprintln!("Error processing message {:?}: {}", m.message_id(), e.to_string())
+                // TODO: change message visibility to 0 I guess?
+            }
+        }
+   
+    }
+}
+
+async fn get_queue_timeout_secs(client: &aws_sdk_sqs::Client, queue_url: &str) -> u16 {
+    match client.get_queue_attributes().queue_url(queue_url).attribute_names(aws_sdk_sqs::model::QueueAttributeName::VisibilityTimeout).send().await {
+        Err(e) => {
+            eprintln!("Unable to establish queue timeout, using default {QUEUE_TIMEOUT_SECS} secs: {}", e.to_string());
+            QUEUE_TIMEOUT_SECS
+        },
+        Ok(gqa) => {
+            match gqa.attributes() {
+                None => {
+                        eprintln!("No attrs, using default {QUEUE_TIMEOUT_SECS} secs");
+                        QUEUE_TIMEOUT_SECS
+                }
+                Some(attrs) => match attrs.get(&aws_sdk_sqs::model::QueueAttributeName::VisibilityTimeout) {
+                    None => {
+                        eprintln!("No timeout attr found, using default {QUEUE_TIMEOUT_SECS} secs");
+                        QUEUE_TIMEOUT_SECS
+                    },
+                    Some(vt) => {
+                        eprintln!("Parsing queue tiemout {vt}");
+                        vt.parse().unwrap_or(QUEUE_TIMEOUT_SECS)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn hold_message_lease(client: &aws_sdk_sqs::Client, component: &Component, m: &aws_sdk_sqs::model::Message, timeout_secs: u16) -> Option<tokio::task::JoinHandle<()>> {
+    let client = client.clone();
+    let queue_url = component.queue_url.clone();
+    let rcpt_handle = m.receipt_handle().map(|s| s.to_owned());
+    let msg_id = m.message_id().unwrap_or("[unknown ID]").to_owned();
+    let interval = tokio::time::Duration::from_secs((timeout_secs / 2).into());
+
+    // TODO: is it worth figuring out a way to batch the renewals?  Same with delete
+    // actions I guess
+    let renew_lease = rcpt_handle.map(|rh| tokio::spawn(async move {
+        let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
+        loop {
+            ticker.tick().await;
+            println!("Renewing lease for message id {msg_id}");
+            let cmv = client.change_message_visibility().queue_url(&queue_url).receipt_handle(&rh).visibility_timeout(timeout_secs.into()).send().await;
+            if let Err(e) = cmv {
+                eprintln!("Failed to update lease for message id {msg_id}: {}", e.to_string());
+            }
+        }
+    }));
+    renew_lease
 }
 
 fn wit_value(v: &aws_sdk_sqs::model::MessageAttributeValue) -> sqs::MessageAttributeValue {
