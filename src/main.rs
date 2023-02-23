@@ -1,14 +1,15 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{sync::Arc};
 
 use anyhow::{Error, Result};
 use async_trait::async_trait;
 use clap::{Parser};
+use is_terminal::IsTerminal;
 use serde::{Deserialize, Serialize};
 use sqs::Sqs;
 use spin_trigger::{cli::{NoArgs, TriggerExecutorCommand}, TriggerAppEngine, TriggerExecutor};
 
-// TODO: dynamically
 const QUEUE_TIMEOUT_SECS: u16 = 30;
+const UNKNOWN_ID: &str = "[unknown id]";
 
 wit_bindgen_wasmtime::import!({paths: ["sqs.wit"], async: *});
 
@@ -18,13 +19,19 @@ type Command = TriggerExecutorCommand<SqsTrigger>;
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
+
     let t = Command::parse();
     t.run().await
 }
 
 pub struct SqsTrigger {
     engine: TriggerAppEngine<Self>,
-    queue_components: Vec<Component>, // HashMap<String, String>,  // Queue URL -> component ID
+    queue_components: Vec<Component>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -52,6 +59,18 @@ struct Component {
 #[serde(deny_unknown_fields)]
 struct TriggerMetadata {
     r#type: String,
+}
+
+// This is a placeholder - we don't yet detect any situations that would require
+// graceful or ungraceful exit.  It will likely require rework when we do.  It
+// is here so that we have a skeleton for returning errors that doesn't expose
+// us to thoughtlessly "?"-ing away an Err case and creating a situation where a
+// transient failure could end the trigger.
+#[allow(dead_code)]
+#[derive(Debug)]
+enum TerminationReason {
+    ExitRequested,
+    Other(String),
 }
 
 #[async_trait]
@@ -95,38 +114,57 @@ impl TriggerExecutor for SqsTrigger {
             Self::start_receive_loop(engine.clone(), &client, component)
         });
 
-        let (r, _, rest) = futures::future::select_all(loops).await;
+        let (tr, _, rest) = futures::future::select_all(loops).await;
         drop(rest);
 
-        r?
+        match tr {
+            Ok(TerminationReason::ExitRequested) => {
+                tracing::trace!("Exiting");
+                Ok(())
+            },
+            _ => {
+                tracing::trace!("Fatal: {:?}", tr);
+                Err(anyhow::anyhow!("{tr:?}"))
+            }
+        }
     }
 }
 
 impl SqsTrigger {
-    // TODO: would this work better returning a stream to allow easy multiplexing etc?
-    fn start_receive_loop(engine: Arc<TriggerAppEngine<Self>>, client: &aws_sdk_sqs::Client, component: &Component) -> tokio::task::JoinHandle<Result<()>> {
+    fn start_receive_loop(engine: Arc<TriggerAppEngine<Self>>, client: &aws_sdk_sqs::Client, component: &Component) -> tokio::task::JoinHandle<TerminationReason> {
         let future = Self::receive(engine, client.clone(), component.clone());
         tokio::task::spawn(future)
     }
 
-    async fn receive(engine: Arc<TriggerAppEngine<Self>>, client: aws_sdk_sqs::Client, component: Component) -> Result<()> {
+    // This doesn't return a Result because we don't want a thoughtless `?` to exit the loop
+    // and terminate the entire trigger.  Termination should be a conscious decision when
+    // we are sure there is no point continuing.
+    async fn receive(engine: Arc<TriggerAppEngine<Self>>, client: aws_sdk_sqs::Client, component: Component) -> TerminationReason {
         let queue_timeout_secs = get_queue_timeout_secs(&client, &component.queue_url).await;
 
         loop {
-            println!("Attempting to receive up to {} from {}...", component.max_messages, component.queue_url);
+            tracing::trace!("Queue {}: attempting to receive up to {}", component.queue_url, component.max_messages);
 
-            let rmo = client
+            let rmo = match client
                 .receive_message()
                 .queue_url(&component.queue_url)
                 .max_number_of_messages(component.max_messages)
                 .set_attribute_names(Some(component.system_attributes.clone()))
                 .set_message_attribute_names(Some(component.message_attributes.clone()))
                 .send()
-                .await?;
+                .await
+            {
+                Ok(rmo) => rmo,
+                Err(e) => {
+                    tracing::error!("Queue {}: error receiving messages: {:?}", component.queue_url, e);
+                    tokio::time::sleep(component.idle_wait).await;
+                    continue;
+                }
+            };
 
             if let Some(msgs) = rmo.messages() {
                 let msgs = msgs.to_vec();
-                println!("...received {} message(s) from {}", msgs.len(), component.queue_url);
+                tracing::info!("Queue {}: received {} message(s)", component.queue_url, msgs.len());
                 for m in msgs {
                     // Spin off the execution so it doesn't block the queue
                     let e = engine.clone();
@@ -135,39 +173,39 @@ impl SqsTrigger {
                     tokio::spawn(async move { Self::process_message(m, e, cl, comp, queue_timeout_secs).await; });
                 }
             } else {
+                tracing::trace!("Queue {}: no messages received", component.queue_url);
                 tokio::time::sleep(component.idle_wait).await;
             }
         }
     }
 
     async fn execute(engine: &Arc<TriggerAppEngine<Self>>, component_id: &str, message: sqs::Message<'_>) -> Result<sqs::MessageAction> {
-        println!("Executing component {component_id}");
+        let msg_id = message.id.unwrap_or(UNKNOWN_ID).to_owned();
+        tracing::trace!("Message {msg_id}: executing component {component_id}");
         let (instance, mut store) = engine.prepare_instance(component_id).await?;
         let sqs_engine = Sqs::new(&mut store, &instance, |data| data.as_mut())?;
         match sqs_engine.handle_queue_message(&mut store, message).await {
-            Ok(Ok(action)) => Ok(action),
-            // TODO: BUTTLOAD OF LOGGING
-            // TODO: DETECT FATALNESS
-            Ok(Err(_e)) => Ok(sqs::MessageAction::Leave),
-            Err(_e) => Ok(sqs::MessageAction::Leave),
+            Ok(Ok(action)) => {
+                tracing::trace!("Message {msg_id}: component {component_id} completed okay");
+                Ok(action)
+            },
+            Ok(Err(e)) => {
+                tracing::warn!("Message {msg_id}: component {component_id} returned error {:?}", e);
+                Err(anyhow::anyhow!("Component {component_id} returned error processing message {msg_id}"))  // TODO: more details when WIT provides them
+            },
+            Err(e) => {
+                tracing::error!("Message {msg_id}: engine error running component {component_id}: {:?}", e);
+                Err(anyhow::anyhow!("Error executing component {component_id} while processing message {msg_id}"))
+            },
         }
     }
 
     async fn process_message(m: aws_sdk_sqs::model::Message, engine: Arc<TriggerAppEngine<Self>>, client: aws_sdk_sqs::Client, component: Component, queue_timeout_secs: u16) {
-        // This has to be inlined or the lists fall off the edge of the borrow checker
-        let empty = HashMap::new();
-        let empty2 = HashMap::new();
-        let sysattrs = m.attributes()
-            .unwrap_or(&empty)
-            .iter()
-            .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: sqs::MessageAttributeValue::Str(v.as_str()), data_type: None })
-            .collect::<Vec<_>>();
-        let userattrs = m.message_attributes()
-            .unwrap_or(&empty2)
-            .iter()
-            .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: wit_value(v), data_type: None })
-            .collect::<Vec<_>>();
-        let attrs = vec![sysattrs, userattrs].concat();
+        let msg_id = m.message_id().unwrap_or(UNKNOWN_ID).to_owned();
+        tracing::trace!("Message {msg_id}: spawned processing task");
+
+        // The attr lists have to be returned to this level so that they live long enough
+        let attrs = to_wit_message_attrs(&m);
         let message = sqs::Message {
             id: m.message_id(),
             message_attributes: &attrs,
@@ -177,7 +215,6 @@ impl SqsTrigger {
         let renew_lease = hold_message_lease(&client, &component, &m, queue_timeout_secs);
 
         let action = Self::execute(&engine, &component.id, message).await;
-        println!("...action is to {action:?}");
 
         if let Some(renewer) = renew_lease {
             renewer.abort();
@@ -185,42 +222,74 @@ impl SqsTrigger {
 
         match action {
             Ok(sqs::MessageAction::Delete) => {
+                tracing::trace!("Message {msg_id} processed successfully: action is Delete");
                 if let Some(receipt_handle) = m.receipt_handle() {
+                    tracing::trace!("Message {msg_id}: attempting to delete via {receipt_handle}");
                     match client.delete_message().queue_url(&component.queue_url).receipt_handle(receipt_handle).send().await {
-                        Ok(_) => (),
-                        Err(e) => eprintln!("TRIG: err deleting {receipt_handle}: {e:?}"),
+                        Ok(_) => tracing::trace!("Message {msg_id} deleted"),
+                        Err(e) => tracing::error!("Message {msg_id}: error deleting via {receipt_handle}: {e:?}"),
                     }
                 }
             }
-            Ok(sqs::MessageAction::Leave) => (),  // TODO: change message visibility to 0
+            Ok(sqs::MessageAction::Leave) => {
+                tracing::trace!("Message {msg_id} processed successfully: action is Leave");
+                // TODO: change message visibility to 0?
+            }
             Err(e) => {
-                eprintln!("Error processing message {:?}: {}", m.message_id(), e.to_string())
+                tracing::error!("Message {msg_id} processing error: {}", e.to_string());
                 // TODO: change message visibility to 0 I guess?
             }
         }
-   
     }
+}
+
+fn to_wit_message_attrs(m: &aws_sdk_sqs::model::Message) -> Vec<sqs::MessageAttribute> {
+    let msg_id = m.message_id().unwrap_or(UNKNOWN_ID).to_owned();
+
+    let sysattrs = m.attributes()
+        .map(|a|
+            a
+            .iter()
+            .map(|(k, v)| sqs::MessageAttribute { name: k.as_str(), value: sqs::MessageAttributeValue::Str(v.as_str()), data_type: None })
+            .collect::<Vec<_>>()
+        ).unwrap_or_default();
+    let userattrs = m.message_attributes()
+        .map(|a|
+            a
+            .iter()
+            .filter_map(|(k, v)| {
+                match wit_value(v) {
+                    Ok(wv) => Some(sqs::MessageAttribute { name: k.as_str(), value: wv, data_type: None }),
+                    Err(e) => {
+                        tracing::error!("Message {msg_id}: can't convert attribute {} to string or blob, skipped: {e:?}", k.as_str());  // TODO: this should probably fail the message
+                        None
+                    },
+                }
+            })
+            .collect::<Vec<_>>()
+        ).unwrap_or_default();
+    vec![sysattrs, userattrs].concat()
 }
 
 async fn get_queue_timeout_secs(client: &aws_sdk_sqs::Client, queue_url: &str) -> u16 {
     match client.get_queue_attributes().queue_url(queue_url).attribute_names(aws_sdk_sqs::model::QueueAttributeName::VisibilityTimeout).send().await {
         Err(e) => {
-            eprintln!("Unable to establish queue timeout, using default {QUEUE_TIMEOUT_SECS} secs: {}", e.to_string());
+            tracing::warn!("Queue {queue_url}: unable to establish queue timeout, using default {QUEUE_TIMEOUT_SECS} secs: {}", e.to_string());
             QUEUE_TIMEOUT_SECS
         },
         Ok(gqa) => {
             match gqa.attributes() {
                 None => {
-                        eprintln!("No attrs, using default {QUEUE_TIMEOUT_SECS} secs");
+                        tracing::debug!("Queue {queue_url}: no attrs, using default {QUEUE_TIMEOUT_SECS} secs");
                         QUEUE_TIMEOUT_SECS
                 }
                 Some(attrs) => match attrs.get(&aws_sdk_sqs::model::QueueAttributeName::VisibilityTimeout) {
                     None => {
-                        eprintln!("No timeout attr found, using default {QUEUE_TIMEOUT_SECS} secs");
+                        tracing::debug!("Queue {queue_url}: no timeout attr found, using default {QUEUE_TIMEOUT_SECS} secs");
                         QUEUE_TIMEOUT_SECS
                     },
                     Some(vt) => {
-                        eprintln!("Parsing queue tiemout {vt}");
+                        tracing::debug!("Queue {queue_url}: parsing queue tiemout {vt}");
                         vt.parse().unwrap_or(QUEUE_TIMEOUT_SECS)
                     }
                 }
@@ -238,26 +307,25 @@ fn hold_message_lease(client: &aws_sdk_sqs::Client, component: &Component, m: &a
 
     // TODO: is it worth figuring out a way to batch the renewals?  Same with delete
     // actions I guess
-    let renew_lease = rcpt_handle.map(|rh| tokio::spawn(async move {
+    rcpt_handle.map(|rh| tokio::spawn(async move {
         let mut ticker = tokio::time::interval_at(tokio::time::Instant::now() + interval, interval);
         loop {
             ticker.tick().await;
-            println!("Renewing lease for message id {msg_id}");
+            tracing::info!("Message {msg_id}: renewing lease via {rh}");
             let cmv = client.change_message_visibility().queue_url(&queue_url).receipt_handle(&rh).visibility_timeout(timeout_secs.into()).send().await;
             if let Err(e) = cmv {
-                eprintln!("Failed to update lease for message id {msg_id}: {}", e.to_string());
+                tracing::error!("Message {msg_id}: failed to update lease: {}", e.to_string());
             }
         }
-    }));
-    renew_lease
+    }))
 }
 
-fn wit_value(v: &aws_sdk_sqs::model::MessageAttributeValue) -> sqs::MessageAttributeValue {
+fn wit_value(v: &aws_sdk_sqs::model::MessageAttributeValue) -> Result<sqs::MessageAttributeValue> {
     if let Some(s) = v.string_value() {
-        sqs::MessageAttributeValue::Str(s)
+        Ok(sqs::MessageAttributeValue::Str(s))
     } else if let Some(b) = v.binary_value() {
-        sqs::MessageAttributeValue::Binary(b.as_ref())
+        Ok(sqs::MessageAttributeValue::Binary(b.as_ref()))
     } else {
-        panic!("Don't know what to do with message attribute value {:?}", v);
+        Err(anyhow::anyhow!("Don't know what to do with message attribute value {:?} (data type {:?})", v, v.data_type()))
     }
 }

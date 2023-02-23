@@ -16,9 +16,8 @@ record message {
     body: option<string>,
 }
 
-enum error {
-    success,
-    error,
+variant error {
+    other(string),
 }
 
 enum message-action {
@@ -26,6 +25,4 @@ enum message-action {
     leave,
 }
 
-// TODO: or allow for multiple messages?
-// TODO: allow a return to control delete/leave/extend visibility
 handle-queue-message: func(message: message) -> expected<message-action, error>

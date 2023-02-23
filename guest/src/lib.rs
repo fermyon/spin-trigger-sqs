@@ -10,6 +10,12 @@ impl sqs::Sqs for Sqs {
         }
         println!("  ... BODY: {:?}", message.body);
 
+        if let Some(b) = message.body.as_ref() {
+            if b.contains("ERROR") {
+                return Err(sqs::Error::Other("YOU triggered this error Towlson YOU did this".to_owned()));
+            }
+        }
+
         if let Some(mid) = message.id {
             if let Some(last_char) = mid.chars().last() {
                 if let Some(num) = last_char.to_digit(10) {
