@@ -1,26 +1,30 @@
 use std::{sync::Arc, collections::HashMap};
 
-use anyhow::{Error, Result};
+use anyhow::{Result};
 use async_trait::async_trait;
 use clap::{Parser};
 use is_terminal::IsTerminal;
 use serde::{Deserialize, Serialize};
-use sqs::Sqs;
-use spin_trigger::{cli::{NoArgs, TriggerExecutorCommand}, TriggerAppEngine, TriggerExecutor};
+use spin_trigger::{cli::{NoArgs, TriggerExecutorCommand}, TriggerAppEngine, TriggerExecutor, EitherInstance};
 
 mod aws;
 mod utils;
 
 use utils::MessageUtils;
 
-wit_bindgen_wasmtime::import!({paths: ["sqs.wit"], async: *});
+wasmtime::component::bindgen!({
+    path: "sqs.wit",
+    async: true
+});
 
-pub(crate) type RuntimeData = sqs::SqsData;
+use fermyon::spin_sqs::sqs_types as sqs;
+
+pub(crate) type RuntimeData = ();
 
 type Command = TriggerExecutorCommand<SqsTrigger>;
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_writer(std::io::stderr)
         .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -82,7 +86,7 @@ impl TriggerExecutor for SqsTrigger {
     type TriggerConfig = SqsTriggerConfig;
     type RunConfig = NoArgs;
 
-    fn new(engine: TriggerAppEngine<Self>) -> Result<Self> {
+    async fn new(engine: TriggerAppEngine<Self>) -> Result<Self> {
         let queue_components = engine
             .trigger_configs()
             .map(|(_, config)| Component {
@@ -211,9 +215,9 @@ impl SqsMessageProcessor {
         // The attr lists have to be returned to this level so that they live long enough
         let attrs = to_wit_message_attrs(&msg);
         let message = sqs::Message {
-            id: msg.message_id(),
-            message_attributes: &attrs,
-            body: msg.body(),
+            id: msg.message_id().map(|s| s.to_owned()),
+            message_attributes: attrs,
+            body: msg.body().map(|s| s.to_owned()),
         };
 
         let renew_lease = aws::hold_message_lease(&self.client, self.queue_url(), &msg, self.queue_timeout_secs);
@@ -246,13 +250,18 @@ impl SqsMessageProcessor {
         }
     }
 
-    async fn execute_wasm(&self, message: sqs::Message<'_>) -> Result<sqs::MessageAction> {
+    async fn execute_wasm(&self, message: sqs::Message) -> Result<sqs::MessageAction> {
         let msg_id = message.display_id();
         let component_id = &self.component.id;
         tracing::trace!("Message {msg_id}: executing component {component_id}");
         let (instance, mut store) = self.engine.prepare_instance(component_id).await?;
-        let sqs_engine = Sqs::new(&mut store, &instance, |data| data.as_mut())?;
-        match sqs_engine.handle_queue_message(&mut store, message).await {
+        let EitherInstance::Component(instance) = instance else {
+            unreachable!()
+        };
+
+        let instance = SpinSqs::new(&mut store, &instance)?;
+
+        match instance.call_handle_queue_message(&mut store, &message).await {
             Ok(Ok(action)) => {
                 tracing::trace!("Message {msg_id}: component {component_id} completed okay");
                 Ok(action)
@@ -290,20 +299,20 @@ fn system_attributes_to_wit(src: &HashMap<aws::MessageSystemAttributeName, Strin
     src
     .iter()
     .map(|(k, v)| sqs::MessageAttribute {
-        name: k.as_str(),
-        value: sqs::MessageAttributeValue::Str(v.as_str()),
+        name: k.as_str().to_string(),
+        value: sqs::MessageAttributeValue::Str(v.to_string()),
         data_type: None
     })
     .collect::<Vec<_>>()
 }
 
-fn user_attributes_to_wit<'a>(src: &'a HashMap<String, aws::MessageAttributeValue>, msg_id: &str) -> Vec<sqs::MessageAttribute<'a>> {
+fn user_attributes_to_wit<'a>(src: &'a HashMap<String, aws::MessageAttributeValue>, msg_id: &str) -> Vec<sqs::MessageAttribute> {
     src
     .iter()
     .filter_map(|(k, v)| {
         match wit_value(v) {
             Ok(wv) => Some(sqs::MessageAttribute {
-                name: k.as_str(),
+                name: k.to_string(),
                 value: wv,
                 data_type: None
             }),
@@ -318,9 +327,9 @@ fn user_attributes_to_wit<'a>(src: &'a HashMap<String, aws::MessageAttributeValu
 
 fn wit_value(v: &aws::MessageAttributeValue) -> Result<sqs::MessageAttributeValue> {
     if let Some(s) = v.string_value() {
-        Ok(sqs::MessageAttributeValue::Str(s))
+        Ok(sqs::MessageAttributeValue::Str(s.to_string()))
     } else if let Some(b) = v.binary_value() {
-        Ok(sqs::MessageAttributeValue::Binary(b.as_ref()))
+        Ok(sqs::MessageAttributeValue::Binary(b.as_ref().to_vec()))
     } else {
         Err(anyhow::anyhow!("Don't know what to do with message attribute value {:?} (data type {:?})", v, v.data_type()))
     }

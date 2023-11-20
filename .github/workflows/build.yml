@@ -35,7 +35,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.66
+          toolchain: 1.71
           targets: ${{ matrix.config.target }}
       - name: Install Spin
         uses: rajatjindal/setup-actions/spin@main
@@ -76,7 +76,7 @@ jobs:
       - name: Install Spin
         uses: rajatjindal/setup-actions/spin@main
         with:
-          version: "v0.8.0"
+          version: "v2.0.0"
       - name: Install pluginify
         shell: bash
         run: spin plugins install --url https://github.com/itowlson/spin-pluginify/releases/download/canary/pluginify.json --yes
