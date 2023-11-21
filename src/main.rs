@@ -306,7 +306,7 @@ fn system_attributes_to_wit(src: &HashMap<aws::MessageSystemAttributeName, Strin
     .collect::<Vec<_>>()
 }
 
-fn user_attributes_to_wit<'a>(src: &'a HashMap<String, aws::MessageAttributeValue>, msg_id: &str) -> Vec<sqs::MessageAttribute> {
+fn user_attributes_to_wit(src: &HashMap<String, aws::MessageAttributeValue>, msg_id: &str) -> Vec<sqs::MessageAttribute> {
     src
     .iter()
     .filter_map(|(k, v)| {
