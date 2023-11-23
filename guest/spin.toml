@@ -1,18 +1,20 @@
-spin_version = "1"
+spin_manifest_version = 2
+
+[application]
+name = "sqs-sample"
 authors = ["itowlson <ivan.towlson@fermyon.com>"]
 description = ""
-name = "goodbye"
-trigger = { type = "sqs" }
 version = "0.1.0"
 
-[[component]]
-id = "itowlsontest"
-source = "target/wasm32-wasi/release/guest.wasm"
-[component.trigger]
+[[trigger.sqs]]
+component = "itowlsontest"
 queue_url = "https://sqs.us-west-2.amazonaws.com/177456779558/itowlsontest"
 max_messages = 1
 idle_wait_seconds = 3
 system_attributes = ["All"]
 message_attributes = ["glonk"]
-[component.build]
+
+[component.itowlsontest]
+source = "target/wasm32-wasi/release/guest.wasm"
+[component.itowlsontest.build]
 command = "cargo build --target wasm32-wasi --release"

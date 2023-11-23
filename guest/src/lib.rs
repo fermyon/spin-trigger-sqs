@@ -1,8 +1,16 @@
-wit_bindgen_rust::export!("../sqs.wit");
+wit_bindgen::generate!({
+    world: "spin-sqs",
+    path: "..",
+    exports: {
+        world: Sqs
+    }
+});
+
+use fermyon::spin_sqs::sqs_types as sqs;
 
 struct Sqs;
 
-impl sqs::Sqs for Sqs {
+impl Guest for Sqs {
     fn handle_queue_message(message: sqs::Message,) -> Result<sqs::MessageAction, sqs::Error> {
         println!("I GOT A MESSAGE!  ID: {:?}", message.id);
         for attr in message.message_attributes {
