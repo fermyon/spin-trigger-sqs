@@ -28,7 +28,7 @@ spin build --up
 
 ## Limitations
 
-This trigger is currently built using Spin 0.10, which is quite an old version and does not support recent Spin features such as key-value storage.  You will likely need to use an old version of the Spin SDK for building applications.
+This trigger is currently built using Spin 2.0.1. You will need that version of Spin or above.
 
 Custom triggers, such as this one, can be run in the Spin command line, but cannot be deployed to Fermyon Cloud.  For other hosts, check the documentation.
 
@@ -38,32 +38,40 @@ The SQS trigger uses the AWS credentials from the standard AWS configuration env
 
 The trigger assumes that the monitored queues exist: it does not create them.
 
-### `spin.toml` - application level
+### `spin.toml`
 
-The trigger type is `sqs`:
+The trigger type is `sqs`, and there are no application-level configuration options.
 
-```toml
-spin_version = "1"
-name = "test"
-version = "0.1.0"
-authors = ["itowlson <ivan.towlson@fermyon.com>"]
-# This line sets the trigger type
-trigger = { type = "sqs" }
-```
-
-There are no application-level configuration options.
-
-### `spin.toml` - component level
-
-The following options are available to set in the `[component.trigger]` section:
+The following options are available to set in the `[[trigger.sqs]]` section:
 
 | Name                  | Type             | Required? | Description |
 |-----------------------|------------------|-----------|-------------|
-| `queue_url`           | string           | required | The queue to which this component listens and responds. |
+| `queue_url`           | string           | required | The queue to which this trigger listens and responds. |
 | `max_messages`        | number           | optional | The maximum number of messages to fetch per AWS queue request. The default is 10. This refers specifically to how messages are fetched from AWS - the component is still invoked separately for each message. |
 | `idle_wait_seconds`   | number           | optional | How long (in seconds) to wait between checks when the queue is idle (i.e. when no messages were received on the last check). The default is 2. If the queue is _not_ idle, there is no wait between checks. The idle wait is also applied if an error occurs. |
 | `system_attributes`   | array of strings | optional | The list of system-defined [attributes](https://docs.rs/aws-sdk-sqs/latest/aws_sdk_sqs/operation/receive_message/builders/struct.ReceiveMessageFluentBuilder.html#method.set_attribute_names) to fetch and make available to the component. |
 | `message_attributes`  | array of strings | optional | The list of [message attributes](https://docs.aws.amazon.com/AWSSimpleQueueService/latest/SQSDeveloperGuide/sqs-message-metadata.html) to fetch and make available to the component. Only string and binary values are supported. |
+| `component`           | string or table  | required | The component to run when a queue message is received. (This is the standard Spin trigger component field.) |
+
+For example:
+
+```toml
+spin_manifest_version = 2
+
+[application]
+name = "test"
+version = "0.1.0"
+
+# One [[trigger.sqs]] section for each queue to monisot1
+[[trigger.sqs]]
+queue_url = "https://sqs.us-west-2.amazonaws.com/12345/testqueue"
+max_messages = 1
+system_attributes = ["All"]
+component = "test"
+
+[component.test]
+source = "..."
+```
 
 ### `spin up` command line options
 

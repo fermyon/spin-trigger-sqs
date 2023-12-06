@@ -1,3 +1,4 @@
 /target
 *.tar.gz
 trigger-sqs.json
+/.spin
