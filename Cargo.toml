@@ -13,10 +13,11 @@ clap = { version = "3.1.15", features = ["derive", "env"] }
 futures = "0.3.25"
 is-terminal = "0.4.3"
 serde = "1.0"
-spin-core = { git = "https://github.com/fermyon/spin", tag = "v2.0.1" }
-spin-trigger = { git = "https://github.com/fermyon/spin", tag = "v2.0.1" }
+spin-core = { git = "https://github.com/fermyon/spin", tag = "v2.1.0" }
+spin-trigger = { git = "https://github.com/fermyon/spin", tag = "v2.1.0" }
 tokio = { version = "1.23", features = ["full"] }
 tokio-scoped = "0.2.0"
 tracing = { version = "0.1", features = ["log"] }
 tracing-subscriber = { version = "0.3.7", features = ["env-filter"] }
-wasmtime = { git = "https://github.com/fermyon/wasmtime", rev = "a2fa8fe7de1e918eae06d78de53451832ba380b6" , features = ["component-model"] }
+wasmtime = { version = "15.0.0", features = ["component-model"] }
+
