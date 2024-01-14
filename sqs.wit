@@ -1,4 +1,4 @@
-package fermyon:spin-sqs@2.0.0
+package fermyon:spin-sqs@2.0.0;
 
 interface sqs-types {
 
@@ -31,6 +31,6 @@ interface sqs-types {
 }
 
 world spin-sqs {
-    use sqs-types.{message, message-action, error}
-    export handle-queue-message: func(message: message) -> result<message-action, error>
+    use sqs-types.{message, message-action, error};
+    export handle-queue-message: func(message: message) -> result<message-action, error>;
 }
