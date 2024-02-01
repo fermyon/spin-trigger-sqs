@@ -366,8 +366,9 @@ dependencies = [
 
 [[package]]
 name = "spin-macro"
-version = "0.1.0"
-source = "git+https://github.com/fermyon/spin?tag=v2.0.1#1d72f1c4244ecd8f7e0f150836565b18ef897e64"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "13524474ab9f876586e29f954377a66ed14fcb646fc9893e6f0e762213ddbd86"
 dependencies = [
  "anyhow",
  "bytes",
@@ -379,8 +380,9 @@ dependencies = [
 
 [[package]]
 name = "spin-sdk"
-version = "2.0.1"
-source = "git+https://github.com/fermyon/spin?tag=v2.0.1#1d72f1c4244ecd8f7e0f150836565b18ef897e64"
+version = "2.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f05d0c09c0935fbb586d0a76e0f14b26b23f421c5e11b81d7200d22c4ead1211"
 dependencies = [
  "anyhow",
  "async-trait",
