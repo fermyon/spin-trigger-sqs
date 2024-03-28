@@ -11,13 +11,19 @@ aws-config = "0.52.0"
 aws-sdk-sqs = "0.22.0"
 clap = { version = "3.1.15", features = ["derive", "env"] }
 futures = "0.3.25"
-is-terminal = "0.4.3"
+is-terminal = {version = "0.4.3", optional = true }
 serde = "1.0"
 spin-core = { git = "https://github.com/fermyon/spin", tag = "v2.3.1" }
 spin-trigger = { git = "https://github.com/fermyon/spin", tag = "v2.3.1" }
 tokio = { version = "1.23", features = ["full"] }
 tokio-scoped = "0.2.0"
 tracing = { version = "0.1", features = ["log"] }
-tracing-subscriber = { version = "0.3.7", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3.7", features = ["env-filter"], optional = true  }
 wasmtime = { version = "18.0.1" }
 
+[features]
+tracing-subscriber = ["dep:tracing-subscriber", "dep:is-terminal"]
+# By default, assume this project is used as a binary and a global tracing
+# subscriber should be set up. If this project is used as a library to a program
+# that already has a subscriber, the user can disable this feature.
+default = ["tracing-subscriber"]
