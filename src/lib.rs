@@ -3,7 +3,8 @@ use std::{sync::Arc, collections::HashMap};
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use spin_trigger::{cli::NoArgs, TriggerAppEngine, TriggerExecutor, EitherInstance};
+use spin_trigger::{cli::NoArgs, TriggerAppEngine, TriggerExecutor};
+use spin_core::InstancePre;
 
 mod aws;
 mod utils;
@@ -69,6 +70,7 @@ impl TriggerExecutor for SqsTrigger {
     type RuntimeData = RuntimeData;
     type TriggerConfig = SqsTriggerConfig;
     type RunConfig = NoArgs;
+    type InstancePre = InstancePre<RuntimeData>;
 
     async fn new(engine: TriggerAppEngine<Self>) -> Result<Self> {
         let queue_components = engine
@@ -239,9 +241,6 @@ impl SqsMessageProcessor {
         let component_id = &self.component.id;
         tracing::trace!("Message {msg_id}: executing component {component_id}");
         let (instance, mut store) = self.engine.prepare_instance(component_id).await?;
-        let EitherInstance::Component(instance) = instance else {
-            unreachable!()
-        };
 
         let instance = SpinSqs::new(&mut store, &instance)?;
 
