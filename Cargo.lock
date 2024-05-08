@@ -2152,17 +2152,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f518f335dce6725a761382244631d86cf0ccb2863413590b31338feb467f9c3"
 
 [[package]]
-name = "is-terminal"
-version = "0.4.9"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cb0889898416213fab133e1d33a0e5858a48177452750691bde3666d0fdbaf8b"
-dependencies = [
- "hermit-abi 0.3.3",
- "rustix 0.38.25",
- "windows-sys 0.48.0",
-]
-
-[[package]]
 name = "itertools"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5356,15 +5345,14 @@ dependencies = [
  "aws-sdk-sqs",
  "clap",
  "futures",
- "is-terminal",
  "openssl",
  "serde",
  "spin-core",
+ "spin-telemetry",
  "spin-trigger",
  "tokio",
  "tokio-scoped",
  "tracing",
- "tracing-subscriber",
  "wasmtime",
 ]
 
