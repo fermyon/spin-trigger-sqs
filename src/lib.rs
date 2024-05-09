@@ -9,6 +9,7 @@ use spin_core::InstancePre;
 mod aws;
 mod utils;
 
+use tracing::{instrument, Instrument, Level};
 use utils::MessageUtils;
 
 wasmtime::component::bindgen!({
@@ -125,7 +126,7 @@ impl TriggerExecutor for SqsTrigger {
 impl SqsTrigger {
     fn start_receive_loop(engine: Arc<TriggerAppEngine<Self>>, client: &aws::Client, component: &Component) -> tokio::task::JoinHandle<TerminationReason> {
         let future = Self::receive(engine, client.clone(), component.clone());
-        tokio::task::spawn(future)
+        tokio::task::spawn(future.in_current_span())
     }
 
     // This doesn't return a Result because we don't want a thoughtless `?` to exit the loop
@@ -162,7 +163,7 @@ impl SqsTrigger {
                     let processor = SqsMessageProcessor::new(&engine, &client, &component, queue_timeout_secs);
                     tokio::spawn(async move {
                         processor.process_message(msg).await
-                    });
+                    }.in_current_span());
                 }
             } else {
                 tracing::trace!("Queue {}: no messages received", component.queue_url);
@@ -193,7 +194,7 @@ impl SqsMessageProcessor {
             queue_timeout_secs
         }
     }
-
+    #[instrument(name = "spin_trigger_sqs.process_message", skip_all, fields(otel.name = format!("{} receive", queue_name_from_url(&self.component.queue_url)), messaging.message.id = msg.display_id()))]
     async fn process_message(&self, msg: aws::Message) {
         let msg_id = msg.display_id();
         tracing::trace!("Message {msg_id}: spawned processing task");
@@ -235,7 +236,7 @@ impl SqsMessageProcessor {
             }
         }
     }
-
+    #[instrument(name = "spin_trigger_sqs.execute_wasm", skip_all, err(level = Level::INFO), fields(otel.name = format!("execute_wasm_component {}", self.component.id)))]
     async fn execute_wasm(&self, message: sqs::Message) -> Result<sqs::MessageAction> {
         let msg_id = message.display_id();
         let component_id = &self.component.id;
@@ -316,4 +317,8 @@ fn wit_value(v: &aws::MessageAttributeValue) -> Result<sqs::MessageAttributeValu
     } else {
         Err(anyhow::anyhow!("Don't know what to do with message attribute value {:?} (data type {:?})", v, v.data_type()))
     }
+}
+
+fn queue_name_from_url(url: &str) -> &str {
+    url.rsplit('/').next().unwrap_or(url)
 }

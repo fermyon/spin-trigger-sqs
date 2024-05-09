@@ -34,7 +34,7 @@ Custom triggers, such as this one, can be run in the Spin command line, but cann
 
 ## Configuration
 
-The SQS trigger uses the AWS credentials from the standard AWS configuration environment variables.  These variables must be set before you run `spin up`.  The credentials must grant access to all queues that the application wants to monitor.  The credentials must allow for reading messages and deleting read messages.
+The SQS trigger uses the AWS credentials from the standard AWS configuration environment variables (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) and requires the SQS queue region to be set in `AWS_REGION`. These variables must be set before you run `spin up`.  The credentials must grant access to all queues that the application wants to monitor.  The credentials must allow for reading messages and deleting read messages.
 
 The trigger assumes that the monitored queues exist: it does not create them.
 

@@ -3,6 +3,7 @@ pub use aws_sdk_sqs::model::Message;
 pub use aws_sdk_sqs::model::MessageAttributeValue;
 pub use aws_sdk_sqs::model::MessageSystemAttributeName;
 pub use aws_sdk_sqs::model::QueueAttributeName;
+use tracing::Instrument;
 
 use crate::utils::MessageUtils;
 
@@ -58,7 +59,7 @@ pub fn hold_message_lease(client: &Client, queue_url: &str, m: &Message, timeout
                     tracing::error!("Message {msg_id}: failed to update lease: {}", e.to_string());
                 }
             }
-        });
+        }.in_current_span());
        
         Some(join_handle)
     } else {
