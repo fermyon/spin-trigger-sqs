@@ -1,10 +1,10 @@
-use std::{sync::Arc, collections::HashMap};
+use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use spin_trigger::{cli::NoArgs, TriggerAppEngine, TriggerExecutor};
 use spin_core::InstancePre;
+use spin_trigger::{cli::NoArgs, TriggerAppEngine, TriggerExecutor};
 
 mod aws;
 mod utils;
@@ -78,9 +78,15 @@ impl TriggerExecutor for SqsTrigger {
             .map(|(_, config)| Component {
                 id: config.component.clone(),
                 queue_url: config.queue_url.clone(),
-                max_messages: config.max_messages.unwrap_or(10).into(),
+                max_messages: config.max_messages.unwrap_or(10),
                 idle_wait: tokio::time::Duration::from_secs(config.idle_wait_seconds.unwrap_or(2)),
-                system_attributes: config.system_attributes.clone().unwrap_or_default().iter().map(|s| s.as_str().into()).collect(),
+                system_attributes: config
+                    .system_attributes
+                    .clone()
+                    .unwrap_or_default()
+                    .iter()
+                    .map(|s| s.as_str().into())
+                    .collect(),
                 message_attributes: config.message_attributes.clone().unwrap_or_default(),
             })
             .collect();
@@ -102,9 +108,10 @@ impl TriggerExecutor for SqsTrigger {
         let client = aws::Client::new(&config);
         let engine = Arc::new(self.engine);
 
-        let loops = self.queue_components.iter().map(|component| {
-            Self::start_receive_loop(engine.clone(), &client, component)
-        });
+        let loops = self
+            .queue_components
+            .iter()
+            .map(|component| Self::start_receive_loop(engine.clone(), &client, component));
 
         let (tr, _, rest) = futures::future::select_all(loops).await;
         drop(rest);
@@ -113,7 +120,7 @@ impl TriggerExecutor for SqsTrigger {
             Ok(TerminationReason::ExitRequested) => {
                 tracing::trace!("Exiting");
                 Ok(())
-            },
+            }
             _ => {
                 tracing::trace!("Fatal: {:?}", tr);
                 Err(anyhow::anyhow!("{tr:?}"))
@@ -123,7 +130,11 @@ impl TriggerExecutor for SqsTrigger {
 }
 
 impl SqsTrigger {
-    fn start_receive_loop(engine: Arc<TriggerAppEngine<Self>>, client: &aws::Client, component: &Component) -> tokio::task::JoinHandle<TerminationReason> {
+    fn start_receive_loop(
+        engine: Arc<TriggerAppEngine<Self>>,
+        client: &aws::Client,
+        component: &Component,
+    ) -> tokio::task::JoinHandle<TerminationReason> {
         let future = Self::receive(engine, client.clone(), component.clone());
         tokio::task::spawn(future)
     }
@@ -131,11 +142,19 @@ impl SqsTrigger {
     // This doesn't return a Result because we don't want a thoughtless `?` to exit the loop
     // and terminate the entire trigger.  Termination should be a conscious decision when
     // we are sure there is no point continuing.
-    async fn receive(engine: Arc<TriggerAppEngine<Self>>, client: aws::Client, component: Component) -> TerminationReason {
+    async fn receive(
+        engine: Arc<TriggerAppEngine<Self>>,
+        client: aws::Client,
+        component: Component,
+    ) -> TerminationReason {
         let queue_timeout_secs = aws::get_queue_timeout_secs(&client, &component.queue_url).await;
 
         loop {
-            tracing::trace!("Queue {}: attempting to receive up to {}", component.queue_url, component.max_messages);
+            tracing::trace!(
+                "Queue {}: attempting to receive up to {}",
+                component.queue_url,
+                component.max_messages
+            );
 
             let rmo = match client
                 .receive_message()
@@ -148,7 +167,11 @@ impl SqsTrigger {
             {
                 Ok(rmo) => rmo,
                 Err(e) => {
-                    tracing::error!("Queue {}: error receiving messages: {:?}", component.queue_url, e);
+                    tracing::error!(
+                        "Queue {}: error receiving messages: {:?}",
+                        component.queue_url,
+                        e
+                    );
                     tokio::time::sleep(component.idle_wait).await;
                     continue;
                 }
@@ -156,13 +179,16 @@ impl SqsTrigger {
 
             if let Some(msgs) = rmo.messages() {
                 let msgs = msgs.to_vec();
-                tracing::info!("Queue {}: received {} message(s)", component.queue_url, msgs.len());
+                tracing::info!(
+                    "Queue {}: received {} message(s)",
+                    component.queue_url,
+                    msgs.len()
+                );
                 for msg in msgs {
                     // Spin off the execution so it doesn't block the queue
-                    let processor = SqsMessageProcessor::new(&engine, &client, &component, queue_timeout_secs);
-                    tokio::spawn(async move {
-                        processor.process_message(msg).await
-                    });
+                    let processor =
+                        SqsMessageProcessor::new(&engine, &client, &component, queue_timeout_secs);
+                    tokio::spawn(async move { processor.process_message(msg).await });
                 }
             } else {
                 tracing::trace!("Queue {}: no messages received", component.queue_url);
@@ -184,13 +210,13 @@ impl SqsMessageProcessor {
         engine: &Arc<TriggerAppEngine<SqsTrigger>>,
         client: &aws::Client,
         component: &Component,
-        queue_timeout_secs: u16
+        queue_timeout_secs: u16,
     ) -> Self {
         Self {
             engine: engine.clone(),
             client: client.clone(),
             component: component.clone(),
-            queue_timeout_secs
+            queue_timeout_secs,
         }
     }
 
@@ -206,7 +232,12 @@ impl SqsMessageProcessor {
             body: msg.body().map(|s| s.to_owned()),
         };
 
-        let renew_lease = aws::hold_message_lease(&self.client, self.queue_url(), &msg, self.queue_timeout_secs);
+        let renew_lease = aws::hold_message_lease(
+            &self.client,
+            self.queue_url(),
+            &msg,
+            self.queue_timeout_secs,
+        );
 
         let action = self.execute_wasm(message).await;
 
@@ -219,9 +250,18 @@ impl SqsMessageProcessor {
                 tracing::trace!("Message {msg_id} processed successfully: action is Delete");
                 if let Some(receipt_handle) = msg.receipt_handle() {
                     tracing::trace!("Message {msg_id}: attempting to delete via {receipt_handle}");
-                    match self.client.delete_message().queue_url(self.queue_url()).receipt_handle(receipt_handle).send().await {
+                    match self
+                        .client
+                        .delete_message()
+                        .queue_url(self.queue_url())
+                        .receipt_handle(receipt_handle)
+                        .send()
+                        .await
+                    {
                         Ok(_) => tracing::trace!("Message {msg_id} deleted"),
-                        Err(e) => tracing::error!("Message {msg_id}: error deleting via {receipt_handle}: {e:?}"),
+                        Err(e) => tracing::error!(
+                            "Message {msg_id}: error deleting via {receipt_handle}: {e:?}"
+                        ),
                     }
                 }
             }
@@ -244,19 +284,32 @@ impl SqsMessageProcessor {
 
         let instance = SpinSqs::new(&mut store, &instance)?;
 
-        match instance.call_handle_queue_message(&mut store, &message).await {
+        match instance
+            .call_handle_queue_message(&mut store, &message)
+            .await
+        {
             Ok(Ok(action)) => {
                 tracing::trace!("Message {msg_id}: component {component_id} completed okay");
                 Ok(action)
-            },
+            }
             Ok(Err(e)) => {
-                tracing::warn!("Message {msg_id}: component {component_id} returned error {:?}", e);
-                Err(anyhow::anyhow!("Component {component_id} returned error processing message {msg_id}"))  // TODO: more details when WIT provides them
-            },
+                tracing::warn!(
+                    "Message {msg_id}: component {component_id} returned error {:?}",
+                    e
+                );
+                Err(anyhow::anyhow!(
+                    "Component {component_id} returned error processing message {msg_id}"
+                )) // TODO: more details when WIT provides them
+            }
             Err(e) => {
-                tracing::error!("Message {msg_id}: engine error running component {component_id}: {:?}", e);
-                Err(anyhow::anyhow!("Error executing component {component_id} while processing message {msg_id}"))
-            },
+                tracing::error!(
+                    "Message {msg_id}: engine error running component {component_id}: {:?}",
+                    e
+                );
+                Err(anyhow::anyhow!(
+                    "Error executing component {component_id} while processing message {msg_id}"
+                ))
+            }
         }
     }
 
@@ -268,44 +321,49 @@ impl SqsMessageProcessor {
 fn to_wit_message_attrs(m: &aws::Message) -> Vec<sqs::MessageAttribute> {
     let msg_id = m.display_id();
 
-    let sysattrs = m.attributes()
+    let sysattrs = m
+        .attributes()
         .map(system_attributes_to_wit)
         .unwrap_or_default();
-    let userattrs = m.message_attributes()
+    let userattrs = m
+        .message_attributes()
         .map(|a| user_attributes_to_wit(a, &msg_id))
         .unwrap_or_default();
 
-    vec![sysattrs, userattrs].concat()
+    [sysattrs, userattrs].concat()
 }
 
-fn system_attributes_to_wit(src: &HashMap<aws::MessageSystemAttributeName, String>) -> Vec<sqs::MessageAttribute> {
-    src
-    .iter()
-    .map(|(k, v)| sqs::MessageAttribute {
-        name: k.as_str().to_string(),
-        value: sqs::MessageAttributeValue::Str(v.to_string()),
-        data_type: None
-    })
-    .collect::<Vec<_>>()
+fn system_attributes_to_wit(
+    src: &HashMap<aws::MessageSystemAttributeName, String>,
+) -> Vec<sqs::MessageAttribute> {
+    src.iter()
+        .map(|(k, v)| sqs::MessageAttribute {
+            name: k.as_str().to_string(),
+            value: sqs::MessageAttributeValue::Str(v.to_string()),
+            data_type: None,
+        })
+        .collect::<Vec<_>>()
 }
 
-fn user_attributes_to_wit(src: &HashMap<String, aws::MessageAttributeValue>, msg_id: &str) -> Vec<sqs::MessageAttribute> {
-    src
-    .iter()
-    .filter_map(|(k, v)| {
-        match wit_value(v) {
-            Ok(wv) => Some(sqs::MessageAttribute {
-                name: k.to_string(),
-                value: wv,
-                data_type: None
-            }),
-            Err(e) => {
-                tracing::error!("Message {msg_id}: can't convert attribute {} to string or blob, skipped: {e:?}", k.as_str());  // TODO: this should probably fail the message
-                None
-            },
-        }
-    })
-    .collect::<Vec<_>>()
+fn user_attributes_to_wit(
+    src: &HashMap<String, aws::MessageAttributeValue>,
+    msg_id: &str,
+) -> Vec<sqs::MessageAttribute> {
+    src.iter()
+        .filter_map(|(k, v)| {
+            match wit_value(v) {
+                Ok(wv) => Some(sqs::MessageAttribute {
+                    name: k.to_string(),
+                    value: wv,
+                    data_type: None,
+                }),
+                Err(e) => {
+                    tracing::error!("Message {msg_id}: can't convert attribute {} to string or blob, skipped: {e:?}", k.as_str()); // TODO: this should probably fail the message
+                    None
+                }
+            }
+        })
+        .collect::<Vec<_>>()
 }
 
 fn wit_value(v: &aws::MessageAttributeValue) -> Result<sqs::MessageAttributeValue> {
@@ -314,6 +372,10 @@ fn wit_value(v: &aws::MessageAttributeValue) -> Result<sqs::MessageAttributeValu
     } else if let Some(b) = v.binary_value() {
         Ok(sqs::MessageAttributeValue::Binary(b.as_ref().to_vec()))
     } else {
-        Err(anyhow::anyhow!("Don't know what to do with message attribute value {:?} (data type {:?})", v, v.data_type()))
+        Err(anyhow::anyhow!(
+            "Don't know what to do with message attribute value {:?} (data type {:?})",
+            v,
+            v.data_type()
+        ))
     }
 }

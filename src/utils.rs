@@ -12,6 +12,9 @@ impl MessageUtils for aws_sdk_sqs::model::Message {
 
 impl MessageUtils for crate::sqs::Message {
     fn display_id(&self) -> String {
-        self.id.as_ref().map(|s| s.as_str()).unwrap_or(UNKNOWN_ID).to_owned()
+        self.id
+            .as_deref()
+            .unwrap_or(UNKNOWN_ID)
+            .to_owned()
     }
 }
