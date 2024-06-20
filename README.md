@@ -18,6 +18,7 @@ spin pluginify --install
 ## Test
 
 The trigger uses the AWS configuration environment variables - these must be set before running.
+Be sure to set `AWS_DEFAULT_REGION` in your environment to the region of your queue.
 
 You will also need to change the `queue_url` in `spin.toml` to a queue you have access to.
 
