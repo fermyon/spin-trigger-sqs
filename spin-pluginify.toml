@@ -1,5 +1,5 @@
 name = "trigger-sqs"
-version = "0.6"
+version = "0.7"
 spin_compatibility = ">=2.2"
 license = "Apache-2.0"
 package = "./target/release/trigger-sqs"
