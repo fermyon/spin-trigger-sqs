@@ -1,12 +1,12 @@
 # Experimental SQS trigger for Spin
 
-## Install the latest version
+## Install the latest release
 
 The latest stable release of the SQS trigger plugin can be installed like so:
 
 ```sh
 spin plugins update
-spin plugin install trigger-sqs
+spin plugins install trigger-sqs
 ```
 
 ## Install the canary version
