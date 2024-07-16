@@ -1,8 +1,19 @@
 # Experimental SQS trigger for Spin
 
-## Install from release
+## Install the latest release
 
+The latest stable release of the SQS trigger plugin can be installed like so:
+
+```sh
+spin plugins update
+spin plugins install trigger-sqs
 ```
+
+## Install the canary version
+
+The canary release of the SQS trigger plugin represents the most recent commits on `main` and may not be stable, with some features still in progress.
+
+```sh
 spin plugins install --url https://github.com/fermyon/spin-trigger-sqs/releases/download/canary/trigger-sqs.json
 ```
 
