@@ -1,14 +1,13 @@
 use std::{collections::HashMap, sync::Arc};
 
 use anyhow::Result;
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use spin_core::InstancePre;
-use spin_trigger::{cli::NoArgs, TriggerAppEngine, TriggerExecutor};
 
 mod aws;
 mod utils;
 
+use spin_factors::RuntimeFactors;
+use spin_trigger::{cli::NoCliArgs, App, Trigger, TriggerApp};
 use utils::MessageUtils;
 
 wasmtime::component::bindgen!({
@@ -18,10 +17,7 @@ wasmtime::component::bindgen!({
 
 use fermyon::spin_sqs::sqs_types as sqs;
 
-pub(crate) type RuntimeData = ();
-
 pub struct SqsTrigger {
-    engine: TriggerAppEngine<Self>,
     queue_components: Vec<Component>,
 }
 
@@ -64,17 +60,16 @@ enum TerminationReason {
     Other(String),
 }
 
-#[async_trait]
-impl TriggerExecutor for SqsTrigger {
-    const TRIGGER_TYPE: &'static str = "sqs";
-    type RuntimeData = RuntimeData;
-    type TriggerConfig = SqsTriggerConfig;
-    type RunConfig = NoArgs;
-    type InstancePre = InstancePre<RuntimeData>;
+impl<F: RuntimeFactors> Trigger<F> for SqsTrigger {
+    const TYPE: &'static str = "sqs";
+    type CliArgs = NoCliArgs;
 
-    async fn new(engine: TriggerAppEngine<Self>) -> Result<Self> {
-        let queue_components = engine
-            .trigger_configs()
+    type InstanceState = ();
+
+    fn new(_cli_args: Self::CliArgs, app: &App) -> anyhow::Result<Self> {
+        let queue_components = app
+            .trigger_configs::<SqsTriggerConfig>(<Self as Trigger<F>>::TYPE)?
+            .into_iter()
             .map(|(_, config)| Component {
                 id: config.component.clone(),
                 queue_url: config.queue_url.clone(),
@@ -91,13 +86,10 @@ impl TriggerExecutor for SqsTrigger {
             })
             .collect();
 
-        Ok(Self {
-            engine,
-            queue_components,
-        })
+        Ok(Self { queue_components })
     }
 
-    async fn run(self, _config: Self::RunConfig) -> Result<()> {
+    async fn run(self, trigger_app: TriggerApp<Self, F>) -> Result<()> {
         tokio::spawn(async move {
             tokio::signal::ctrl_c().await.unwrap();
             std::process::exit(0);
@@ -106,12 +98,12 @@ impl TriggerExecutor for SqsTrigger {
         let config = aws_config::load_from_env().await;
 
         let client = aws::Client::new(&config);
-        let engine = Arc::new(self.engine);
+        let app = Arc::new(trigger_app);
 
         let loops = self
             .queue_components
             .iter()
-            .map(|component| Self::start_receive_loop(engine.clone(), &client, component));
+            .map(|component| Self::start_receive_loop(app.clone(), &client, component));
 
         let (tr, _, rest) = futures::future::select_all(loops).await;
         drop(rest);
@@ -130,20 +122,20 @@ impl TriggerExecutor for SqsTrigger {
 }
 
 impl SqsTrigger {
-    fn start_receive_loop(
-        engine: Arc<TriggerAppEngine<Self>>,
+    fn start_receive_loop<F: RuntimeFactors>(
+        app: Arc<TriggerApp<Self, F>>,
         client: &aws::Client,
         component: &Component,
     ) -> tokio::task::JoinHandle<TerminationReason> {
-        let future = Self::receive(engine, client.clone(), component.clone());
+        let future = Self::receive(app, client.clone(), component.clone());
         tokio::task::spawn(future)
     }
 
     // This doesn't return a Result because we don't want a thoughtless `?` to exit the loop
     // and terminate the entire trigger.  Termination should be a conscious decision when
     // we are sure there is no point continuing.
-    async fn receive(
-        engine: Arc<TriggerAppEngine<Self>>,
+    async fn receive<F: RuntimeFactors>(
+        app: Arc<TriggerApp<Self, F>>,
         client: aws::Client,
         component: Component,
     ) -> TerminationReason {
@@ -187,7 +179,7 @@ impl SqsTrigger {
                 for msg in msgs {
                     // Spin off the execution so it doesn't block the queue
                     let processor =
-                        SqsMessageProcessor::new(&engine, &client, &component, queue_timeout_secs);
+                        SqsMessageProcessor::new(&app, &client, &component, queue_timeout_secs);
                     tokio::spawn(async move { processor.process_message(msg).await });
                 }
             } else {
@@ -198,22 +190,22 @@ impl SqsTrigger {
     }
 }
 
-struct SqsMessageProcessor {
-    engine: Arc<TriggerAppEngine<SqsTrigger>>,
+struct SqsMessageProcessor<F: RuntimeFactors> {
+    app: Arc<TriggerApp<SqsTrigger, F>>,
     client: aws::Client,
     component: Component,
     queue_timeout_secs: u16,
 }
 
-impl SqsMessageProcessor {
+impl<F: RuntimeFactors> SqsMessageProcessor<F> {
     fn new(
-        engine: &Arc<TriggerAppEngine<SqsTrigger>>,
+        app: &Arc<TriggerApp<SqsTrigger, F>>,
         client: &aws::Client,
         component: &Component,
         queue_timeout_secs: u16,
     ) -> Self {
         Self {
-            engine: engine.clone(),
+            app: app.clone(),
             client: client.clone(),
             component: component.clone(),
             queue_timeout_secs,
@@ -280,7 +272,8 @@ impl SqsMessageProcessor {
         let msg_id = message.display_id();
         let component_id = &self.component.id;
         tracing::trace!("Message {msg_id}: executing component {component_id}");
-        let (instance, mut store) = self.engine.prepare_instance(component_id).await?;
+        let instance_builder = self.app.prepare(component_id)?;
+        let (instance, mut store) = instance_builder.instantiate(()).await?;
 
         let instance = SpinSqs::new(&mut store, &instance)?;
 
