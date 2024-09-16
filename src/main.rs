@@ -1,8 +1,9 @@
 use clap::Parser;
-use spin_trigger::cli::TriggerExecutorCommand;
+use spin_runtime_factors::FactorsBuilder;
+use spin_trigger::cli::FactorsTriggerCommand;
 use trigger_sqs::SqsTrigger;
 
-type Command = TriggerExecutorCommand<SqsTrigger>;
+type Command = FactorsTriggerCommand<SqsTrigger, FactorsBuilder>;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
