@@ -1,6 +1,6 @@
 name = "trigger-sqs"
 description = "A Spin trigger for Amazon SQS events"
-version = "0.7"
+version = "0.8"
 spin_compatibility = ">=2.2"
 license = "Apache-2.0"
 package = "./target/release/trigger-sqs"
